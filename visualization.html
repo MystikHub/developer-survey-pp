@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+<!-- d3.js -->
+<script type="text/javascript" src="https://d3js.org/d3.v4.min.js"></script>
+<!-- Bootstrap -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4" crossorigin="anonymous"></script>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
+<!-- Choropleth map data -->
+<script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+<script src="https://d3js.org/d3-geo-projection.v2.min.js"></script>
+
+<title>DeveloperSurvey++</title>
+
+<style>
+    body {
+        background-color: hsl(237, 100%, 12%);
+        color: white;
+    }
+
+    svg {
+        font-size: 16px;
+    }
+
+    .tooltip {
+        color: white;
+        opacity: 0;
+        background-color: gray;
+        border-radius: 5px;
+        padding: 5px;
+        position: absolute;
+        /* width: 250px; */
+    }
+</style>
+</head>
+<body>
+<div style="text-align: center; width: 100%;" class="mx-auto mt-4">
+    <h1>DeveloperSurvey++</h1>
+    <h3 id="status">Loading data, please wait...</h3>
+
+    <div class="row placeholder-glow">
+        <div class="col px-0">
+            <svg class="placeholder" id="range-chart" style="width: 500px; height: 900px"></svg>
+            <div id="range-chart-tooltip" class="tooltip"></div>
+        </div>
+        <div class="col px-0">
+            <svg class="placeholder" id="chord-diagram" style="width: 900px; height: 900px"></svg>
+            <div id="chord-diagram-tooltip" class="tooltip"></div>
+        </div>
+        <div class="col px-0">
+            <figure style="max-width: 500px" class="text-center mb-0 px-0">
+                <blockquote class="blockquote">
+                    Salary variation between demographics by country
+                </blockquote>
+                <figcaption class="blockquote-footer mb-0">
+                    See information below the visualization for salary variation calculation
+                </figcaption>
+            </figure>
+            <svg id="choropleth-map" style="width: 500px; height: 400px" class="mx-auto px-0 placeholder"></svg>
+            <div id="map-tooltip" class="tooltip"></div>
+
+            <figure style="max-width: 500px" class="text-center mb-0">
+                <blockquote class="blockquote">
+                    Professional experience and total years spent coding vs. salary
+                </blockquote>
+            </figure>
+            <svg id="heatmap" style="width: 500px; height: 400px; cursor: default" class="mx-auto placeholder"></svg>
+            <div id="heatmap-tooltip" class="tooltip"></div>
+        </div>
+    </div>
+    <div class="container">
+        <div class="row">
+            <div class="col-6">
+                <label for="topKStartingSelector" class="form-label">Top salaries from: <span id="topKStartingIndicator">1</span></label>
+                <input type="range" class="form-range" min="0" max="29" id="topKStartingSelector" value="0">
+            </div>
+
+            <div class="col-6">
+                <label for="topKSelector" class="form-label">To: <span id="topKIndicator">30</span></label>
+                <input type="range" class="form-range" min="1" max="29" id="topKSelector" value="29">
+            </div>
+        </div>
+    </div>
+</div>
+<div class="container my-3">
+    <h1>About this visualization</h1>
+    <p>This visualization is based on the 2022 StackOverflow developer survey
+    (you can find the datasets and original visualizations <a
+    href="https://insights.stackoverflow.com/survey">here</a>, but it's also
+    included with this website). The original visualizations published by
+    StackOverflow does a good job at visualizing answers to each of the
+    questions. This visualization aims to dive a little deeper into the
+    relationships between multiple answers, focusing on fairness in workload,
+    salary, age, and more.</p>
+
+    <h2>Interacting with the visualization</h2>
+    <p>The visualization can be interacted with in a number of ways to highlight
+    interesting roles, connections, heatmap points, or countries.</p>
+
+    <h3>Chord and radial bar chart</h3>
+    <p>You can hover over the bars to highlight data with that role.
+    Additionally, you can also hover over any of the chords to highlight the two
+    roles that the chord connects.</p>
+
+    <h3>Heat map</h3>
+
+    <h3>Choropleth map</h3>
+
+    <h2>Technical details</h2>
+    <p>This visualization was made with a 1920x1080 screen in mind. For the
+    best experience, ensure your monitor has this resolution or larger.</p>
+    <p>The following libraries are used:</p>
+    <ul>
+        <li><b>d3.js</b>: Used to build the SVG elements within the
+        visualization above</li>
+        <li><b>Bootstrap</b>: Used to lay out HTML elements and improve the
+        appearance of the website</li>
+    </ul>
+
+    <h2>Other sources</h2>
+    <ul>
+        <li><b>Chart templates and world map</b>: <a
+        href="https://d3-graph-gallery.com/">d3.js Graph Gallery</a></li>
+    </ul>
+</div>
+
+<script>
+d3.xml("./chord-placeholder.svg", res => {
+    document.getElementById("chord-diagram").innerHTML = res.activeElement.innerHTML;
+})
+
+/*
+ *
+ *  Configuration variables for all the charts
+ *
+ */
+let data = {};
+let roleData = new Map();
+let sortedRoleData = [];
+let topK = 100;
+let topKStarting = 0;
+let transitionLength = 200;
+
+let heatmapRows = 11;
+let heatmapColumns = 11;
+let rowBinSize = 50 / heatmapRows;
+let columnBinSize = 50 / heatmapColumns;
+let heatmapData = Array.from(Array(heatmapRows), () => Array(heatmapColumns).fill({total: 0, count: 0}))
+
+let countrySalaryVariation = new Map();
+
+// Slider event handlers
+document.getElementById("topKStartingSelector").onchange = (event) => {
+    topKStarting = parseInt(document.getElementById("topKStartingSelector").value);
+    console.log(topKStarting);
+    document.getElementById("topKStartingIndicator").innerHTML = topKStarting + 1;
+    makeRangeChart();
+    makeChordDiagram();
+}
+
+document.getElementById("topKSelector").onchange = (event) => {
+    topK = parseInt(document.getElementById("topKSelector").value);
+    console.log(topK);
+    document.getElementById("topKIndicator").innerHTML = topK + 1;
+    makeRangeChart();
+    makeChordDiagram();
+}
+
+// Read the data and derive the data we need for each chart
+d3.csv("./stackoverflow_developer_survey_2022.csv", d => {
+    data = d;
+
+    data.map(dataPoint => {
+        /*
+        **
+        ** Chord diagram data
+        **
+        */
+        if(dataPoint.ResponseId === "1" ||
+            dataPoint.DevType === "NA" ||
+            dataPoint.ConvertedCompYearly === "NA")
+            return;
+        
+        // Developers can have multiple roles, they're separated by semicolons
+        let devTypes = dataPoint.DevType.split(";");
+        let salary = parseInt(dataPoint.ConvertedCompYearly);
+        for(let i = 0; i < devTypes.length; i++) {
+            let devType = devTypes[i];
+            let role = {};
+            if(roleData.has(devType)) {
+                role = roleData.get(devType);
+                role.salaryTotal = role.salaryTotal + salary;
+                role.nRolesTotal += devTypes.length;
+                role.engineersWithThisRole++;
+            } else {
+                role.salaryTotal = salary;
+                role.nRolesTotal = devTypes.length;
+                role.engineersWithThisRole = 1;
+                role.sharesRole = new Map();
+
+                role.avgSalaryLowTotal = 0;
+                role.avgSalaryLowCount = 0;
+                role.avgSalaryHighTotal = 0;
+                role.avgSalaryHighCount = 0;
+
+                role.ageVariation = new Map();
+                role.genderVariation = new Map();
+                role.ethnicityVariation = new Map();
+            }
+
+            // The engineer with this role also has all other roles
+            for(let j = i + 1; j < devTypes.length; j++) {
+                if(!role.sharesRole.has(devTypes[j])) {
+                    role.sharesRole.set(devTypes[j], 0);
+                } else {
+                    role.sharesRole.set(devTypes[j], role.sharesRole.get(devTypes[j]) + 1);
+                }
+            }
+
+            // Save salary variation data
+            // Age
+            if(dataPoint.Age != "Prefer not to say" && dataPoint.Age != "NA") {
+                let previousAge = {
+                    total: 0,
+                    count: 0,
+                }
+
+                if(role.ageVariation.has(dataPoint.Age))
+                    previousAge = role.ageVariation.get(dataPoint.Age);
+
+                let newAge = {
+                    total: previousAge.total + salary,
+                    count: previousAge.count + 1,
+                }
+
+                role.ageVariation.set(dataPoint.Age, newAge);
+            }
+
+            // Gender
+            let genders = dataPoint.Gender.split(";");
+            for(let i = 0; i < genders.length && genders[i] != "NA"; i++) {
+                let previousGender = {
+                    total: 0,
+                    count: 0,
+                }
+
+                if(role.genderVariation.has(genders[i]))
+                    previousGender = role.genderVariation.get(genders[i]);
+
+                let newGender = {
+                    total: previousGender.total + salary,
+                    count: previousGender.count + 1,
+                }
+
+                role.genderVariation.set(genders[i], newGender);
+            }
+
+            // Ethnicities
+            let ethnicities = dataPoint.Ethnicity.split(";");
+            for(let i = 0; i < ethnicities.length && ethnicities[i] != "Prefer not to say"; ethnicities++) {
+                let previousEthnicity = {
+                    total: 0,
+                    count: 0,
+                }
+
+                if(role.ethnicityVariation.has(ethnicities[i]))
+                    previousEthnicity = role.ethnicityVariation.get(ethnicities[i]);
+
+                let newEthnicity = {
+                    total: previousEthnicity.total + salary,
+                    count: previousEthnicity.count + 1,
+                }
+
+                role.ethnicityVariation.set(ethnicities[i], newEthnicity);
+            }
+
+            // For range bar chart
+            if(dataPoint.Age === "18-24 years old" || dataPoint.Age === "25-34 years old") {
+                role.avgSalaryLowTotal = role.avgSalaryLowTotal + salary;
+                role.avgSalaryLowCount = role.avgSalaryLowCount + 1;
+            } else if(dataPoint.Age === "55-64 years old" || dataPoint.Age === "65 years or older") {
+                role.avgSalaryHighTotal = role.avgSalaryHighTotal + salary;
+                role.avgSalaryHighCount = role.avgSalaryHighCount + 1;
+            }
+
+            roleData.set(devType, role);
+        }
+
+        /*
+        **
+        ** Choropleth map salary variation
+        **
+        */
+        if(dataPoint.Country != "NA") {
+            let previousCountry = {
+                ageVariation: new Map(),
+                genderVariation: new Map(),
+                ethnicityVariation: new Map(),
+            }
+
+            if(countrySalaryVariation.get(dataPoint.Country))
+                previousCountry = countrySalaryVariation.get(dataPoint.Country);
+
+            // Age
+            if(dataPoint.Age != "Prefer not to say" && dataPoint.Age != "NA") {
+                let previousAge = {
+                    total: 0,
+                    count: 0,
+                }
+
+                if(previousCountry.ageVariation.has(dataPoint.Age))
+                    previousAge = previousCountry.ageVariation.get(dataPoint.Age);
+
+                let newAge = {
+                    total: previousAge.total + salary,
+                    count: previousAge.count + 1,
+                }
+
+                previousCountry.ageVariation.set(dataPoint.Age, newAge);
+            }
+
+            // Gender
+            let genders = dataPoint.Gender.split(";");
+            for(let i = 0; i < genders.length && genders[i] != "NA"; i++) {
+                let previousGender = {
+                    total: 0,
+                    count: 0,
+                }
+
+                if(previousCountry.genderVariation.has(genders[i]))
+                    previousGender = previousCountry.genderVariation.get(genders[i]);
+
+                let newGender = {
+                    total: previousGender.total + salary,
+                    count: previousGender.count + 1,
+                }
+
+                previousCountry.genderVariation.set(genders[i], newGender);
+            }
+
+            // Ethnicities
+            let ethnicities = dataPoint.Ethnicity.split(";");
+            for(let i = 0; i < ethnicities.length && ethnicities[i] != "Prefer not to say"; ethnicities++) {
+                let previousEthnicity = {
+                    total: 0,
+                    count: 0,
+                }
+
+                if(previousCountry.ethnicityVariation.has(ethnicities[i]))
+                    previousEthnicity = previousCountry.ethnicityVariation.get(ethnicities[i]);
+
+                let newEthnicity = {
+                    total: previousEthnicity.total + salary,
+                    count: previousEthnicity.count + 1,
+                }
+
+                previousCountry.ethnicityVariation.set(ethnicities[i], newEthnicity);
+            }
+
+            countrySalaryVariation.set(dataPoint.Country, previousCountry);
+        }
+
+        /*
+        **
+        ** Heatmap data
+        **
+        */
+        if(dataPoint.YearsCode === "NA" || dataPoint.YearsCodePro === "NA")
+            return;
+        
+        let yearsCodeVal = 0;
+        let yearsCodeProVal = 0;
+        if(dataPoint.YearsCode === "Less than 1 year")
+            yearsCodeVal = 0;
+        else if(dataPoint.YearsCode === "More than 50 years")
+            yearsCodeVal = 50;
+        else
+            yearsCodeVal = parseInt(dataPoint.YearsCode);
+        
+        if(dataPoint.YearsCodePro === "Less than 1 year")
+            yearsCodeProVal = 0;
+        else if(dataPoint.YearsCodePro === "More than 50 years")
+            yearsCodeProVal = 50;
+        else
+            yearsCodeProVal  = parseInt(dataPoint.YearsCodePro);
+        
+        let yearsCodeBin = Math.floor(yearsCodeVal / rowBinSize);
+        let yearsCodeProBin = Math.floor(yearsCodeProVal / columnBinSize);
+
+        let newVal = {total: 0, count: 0};
+        newVal.total = heatmapData[yearsCodeBin][yearsCodeProBin].total + salary;
+        newVal.count = heatmapData[yearsCodeBin][yearsCodeProBin].count + 1;
+        heatmapData[yearsCodeBin][yearsCodeProBin] = newVal;
+
+    })
+
+    /*
+    **
+    ** Chord diagram data
+    **
+    */
+
+    // Calculate averages
+    document.getElementById("status").innerHTML = "Reorganizing and calculating averages...";
+    roleData.forEach((value, key) => {
+        let avgSalaryLow = -1;
+        let avgSalaryHigh = -1;
+        if(value.avgSalaryLowCount != 0)
+            avgSalaryLow = value.avgSalaryLowTotal / value.avgSalaryLowCount;
+        if(value.avgSalaryHighCount != 0)
+            avgSalaryHigh = value.avgSalaryHighTotal / value.avgSalaryHighCount;
+        
+        // Within each role, and each ethnicity, gender, and age range, calculate the salary variation
+        let ageDifferences = [];
+        let ethnicityDifferences = [];
+        let genderDifferences = [];
+        let ageKeys = Array.from(value.ageVariation.keys());
+        let ethnicityKeys = Array.from(value.ethnicityVariation.keys());
+        let genderKeys = Array.from(value.genderVariation.keys());
+
+        for(let i = 0; i < ageKeys.length; i++) {
+            for(let j = i + 1; j < ageKeys.length; j++) {
+                if(value.ageVariation.get(ageKeys[i]).count == 0 || value.ageVariation.get(ageKeys[j]).count == 0) {
+                    continue;
+                } else {
+                    let averageI = value.ageVariation.get(ageKeys[i]).total / value.ageVariation.get(ageKeys[i]).count;
+                    let averageJ = value.ageVariation.get(ageKeys[j]).total / value.ageVariation.get(ageKeys[j]).count;
+                    ageDifferences.push(Math.abs(averageI - averageJ))
+                }
+            }
+        }
+        for(let i = 0; i < ethnicityKeys.length; i++) {
+            for(let j = i + 1; j < ethnicityKeys.length; j++) {
+                if(value.ethnicityVariation.get(ethnicityKeys[i]).count == 0 || value.ethnicityVariation.get(ethnicityKeys[j]).count == 0) {
+                    continue;
+                } else {
+                    let averageI = value.ethnicityVariation.get(ethnicityKeys[i]).total / value.ethnicityVariation.get(ethnicityKeys[i]).count;
+                    let averageJ = value.ethnicityVariation.get(ethnicityKeys[j]).total / value.ethnicityVariation.get(ethnicityKeys[j]).count;
+                    ethnicityDifferences.push(Math.abs(averageI - averageJ))
+                }
+            }
+        }
+        for(let i = 0; i < genderKeys.length; i++) {
+            for(let j = i + 1; j < genderKeys.length; j++) {
+                if(value.genderVariation.get(genderKeys[i]).count == 0 || value.genderVariation.get(genderKeys[j]).count == 0) {
+                    continue;
+                } else {
+                    let averageI = value.genderVariation.get(genderKeys[i]).total / value.genderVariation.get(genderKeys[i]).count;
+                    let averageJ = value.genderVariation.get(genderKeys[j]).total / value.genderVariation.get(genderKeys[j]).count;
+                    genderDifferences.push(Math.abs(averageI - averageJ))
+                }
+            }
+        }
+        
+        let ageTotalDifference = 0, ethnicityTotalDifference = 0, genderTotalDifference = 0;
+        for(let i = 0; i < ageDifferences.length; i++)
+            ageTotalDifference = ageTotalDifference + ageDifferences[i];
+        for(let i = 0; i < ethnicityDifferences.length; i++)
+            ethnicityTotalDifference = ethnicityTotalDifference + ethnicityDifferences[i];
+        for(let i = 0; i < genderDifferences.length; i++)
+            genderTotalDifference = genderTotalDifference + genderDifferences[i];
+
+        let ageVariation = ageTotalDifference / ageDifferences.length;
+        let ethnicityVariation = ethnicityTotalDifference / ethnicityDifferences.length;
+        let genderVariation = genderTotalDifference / genderDifferences.length;
+
+        let salaryVariation = (ageVariation + ethnicityVariation + genderVariation) / 3;
+        console.log(`${key}: ${salaryVariation}`);
+
+        let averagedRole = {
+            averageSalary: value.salaryTotal / value.engineersWithThisRole,
+            averageNRoles: value.nRolesTotal / value.engineersWithThisRole,
+            engineersWithThisRole: value.engineersWithThisRole,
+            sharesRole: value.sharesRole,
+            avgSalaryLow,
+            avgSalaryHigh,
+            ageVariation,
+            ethnicityVariation,
+            genderVariation,
+            salaryVariation,
+        }
+        
+        roleData[key] = averagedRole;
+    })
+
+    // Sort the role data by salary
+    for([key] of roleData) {
+        let element = roleData[key];
+        element.role = key;
+        sortedRoleData.push(element)
+    }
+    
+    sortedRoleData.sort((a, b) => b.averageSalary - a.averageSalary)
+
+    /*
+    **
+    ** Country salary variation averages
+    **
+    */
+    for([key, value] of countrySalaryVariation) {
+        let countryData = countrySalaryVariation.get(key);
+        let countrySalaryVariationDemographics = Object.keys(countryData);
+        let averages = [];
+
+        for(let demographicIndex = 0; demographicIndex < countrySalaryVariationDemographics.length; demographicIndex++) {
+            let demographicData = countryData[countrySalaryVariationDemographics[demographicIndex]];
+            let demographicDifferences = [];
+            let demographicGroupKeys = Array.from(demographicData.keys());
+
+            for(let i = 0; i < demographicGroupKeys.length; i++) {
+                for(let j = i + 1; j < demographicGroupKeys.length; j++) {
+                    if(demographicData.get(demographicGroupKeys[i]).count == 0 || demographicData.get(demographicGroupKeys[i]).count == 0) {
+                        continue;
+                    } else {
+                        let averageI = demographicData.get(demographicGroupKeys[i]).total / demographicData.get(demographicGroupKeys[i]).count;
+                        let averageJ = demographicData.get(demographicGroupKeys[j]).total / demographicData.get(demographicGroupKeys[j]).count;
+                        demographicDifferences.push(Math.abs(averageI - averageJ))
+                    }
+                }
+            }
+
+            let demographicTotalDifference = 0;
+            for(let i = 0; i < demographicDifferences.length; i++)
+                demographicTotalDifference = demographicTotalDifference + demographicDifferences[i];
+            
+            let demographicAverage = demographicTotalDifference / demographicDifferences.length;
+            countryData[countrySalaryVariationDemographics[demographicIndex] + "Average"] = demographicAverage;
+            averages.push(demographicAverage);
+        }
+
+        let allDemographicsTotal = 0;
+        for(let i = 0; i < averages.length; i++) {
+            if(isNaN(averages[i]))
+                continue;
+            allDemographicsTotal = allDemographicsTotal + averages[i];
+        }
+
+        countryData.salaryVariation = allDemographicsTotal / countrySalaryVariationDemographics.length;
+    }
+
+    /*
+    **
+    ** Heatmap averages
+    **
+    */
+    heatmapData.map((row, rowIndex) => {
+        row.map((value, columnIndex) => {
+            // Some values in the matrix don't have values (i.e. 0, 0)
+            // Set these directly to 0
+            if(value.count == 0)
+                heatmapData[rowIndex][columnIndex] = 0;
+            else
+                heatmapData[rowIndex][columnIndex] = value.total / value.count;
+        });
+    })
+    let heatmapArray = [];
+    for(let i = 0; i < 11; i++) {
+        for(let j = 0; j < 11; j++) {
+            heatmapArray.push({row: i, column: j, salary: Math.round(heatmapData[i][j])});
+        }
+    }
+    heatmapData = heatmapArray;
+
+    makeRangeChart();
+    makeChordDiagram(null, null);
+    makeChoroplethMap();
+    makeHeatmap();
+
+    let placeholderElements = document.getElementsByClassName("placeholder");
+    for(let i = placeholderElements.length - 1; i >= 0; i--)
+        placeholderElements[i].classList.remove("placeholder");
+});
+
+function makeRangeChart() {
+    let yAxisMargin = 20;
+    let width = 500 - yAxisMargin * 2;
+    let height = 850;
+    let dataXMax = 500000;
+    let filteredRoleData = sortedRoleData.slice(topKStarting, topK);
+    
+    let barYSize = height / filteredRoleData.length;
+
+    let svgRoot = document.getElementById("range-chart");
+    while(svgRoot.lastChild)
+        svgRoot.removeChild(svgRoot.lastChild);
+
+    // append the svg object to the body of the page
+    var svg = d3.select("#range-chart")
+        .append("g")
+        .attr("transform", `translate(${yAxisMargin},0)`);
+
+    // X Axis
+    let x = d3.scaleLinear()
+        .domain([0, dataXMax])
+        .range([0, width]);
+
+    svg.append("g")
+        .attr("class", "xAxis")
+        .attr("transform", "translate(0," + height + ")")
+        .call(d3.axisBottom(x).ticks(5))
+        .select("path")
+        .attr("stroke", "#FFFFFF");
+    
+    // Grid lines
+    d3.selectAll(".xAxis .tick")
+        .append("line")
+        .style("stroke", "#FFFFFF80")
+        .attr("x1", 0)
+        .attr("y1", -height)
+        .attr("x2", 0)
+        .attr("y2", 0);
+
+    // Label
+    svg.append("text")
+        .attr("text-anchor", "middle")
+        .attr("x", width / 2)
+        .attr("y", height + 40)
+        .attr("fill", "#FFFFFF")
+        .text("Salary range");
+
+    // Build color scale
+    let colorGenerator = d3.scaleSequential()
+        .interpolator(d3.interpolateGreens)
+        .domain([0, 300000]);
+
+    // Legend
+    let legendX = width * 0.75;
+    let legendWidth = 20;
+    let legendHeight = 150;
+    let legendMarginBottom = 50;
+
+    let colorScale = d3.scaleLinear()
+        .domain([0, 300000])
+        .range([legendHeight, 0]);
+
+    svg.append('linearGradient')
+        .attr('id', 'range-chart-gradient')
+        .attr('gradientTransform', 'rotate(90)')
+    d3.select('#range-chart-gradient')
+        .append('stop')
+        .attr('offset', '0%')
+        .style('stop-color', "#00441B")
+    d3.select('#range-chart-gradient')
+        .append('stop')
+        .attr('offset', '100%')
+        .style('stop-color', "#F7FCF5")
+    svg.append('rect')
+        .attr('x', legendX)
+        .attr('y', height - legendMarginBottom - legendHeight)
+        .attr('width', legendWidth)
+        .attr('height', legendHeight)
+        .attr('fill', "url(#range-chart-gradient)")
+
+    let rangeChartAxis = d3.axisRight(colorScale)
+        .tickFormat(val => "$" + val.toLocaleString())
+        .ticks(5)
+
+    svg.append("g")
+        .attr("transform", "translate(" + (legendX + legendWidth + 2) + "," + (height - legendMarginBottom - legendHeight) + ")")
+        .attr("id", "range-legend")
+        .call(rangeChartAxis)
+        .select("path")
+        .attr("stroke", "#ffffff")
+
+    svg.append("text")
+        .attr("x", legendX)
+        .attr("y", height - legendMarginBottom - legendHeight - 10)
+        .attr("fill", "#ffffff")
+        .text("Range")
+
+    d3.selectAll("#range-legend line")
+        .attr("stroke", "#FFFFFF")
+
+    d3.selectAll(".tick>text")
+        .attr("fill", "#ffffff")
+    
+    // Negative range indicator
+    svg.append("rect")
+        .attr("x", legendX)
+        .attr("y", height - legendMarginBottom)
+        .attr("width", legendWidth)
+        .attr("height", legendWidth)
+        .attr("fill", "#67000D")
+    
+    svg.append("text")
+        .attr("x", legendX + legendWidth + 12)
+        .attr("y", height - legendMarginBottom + 20)
+        .attr("font-size", 10)
+        .text("salary decrease")
+        .attr("fill", "#FFFFFF")
+
+    var tooltip = d3.select("#range-chart-tooltip");
+    let body = document.getElementsByTagName("body")[0];
+    
+    svg.append("g")
+        .selectAll()
+        .data(filteredRoleData)
+        .enter()
+        .append("rect")
+            .attr("x", d => (Math.min(d.avgSalaryLow, d.avgSalaryHigh) / dataXMax) * width)
+            .attr("y", (d, i) => i * barYSize)
+            .attr("width", d => ((Math.abs(d.avgSalaryHigh - d.avgSalaryLow)) / dataXMax) * width)
+            .attr("height", barYSize - 5)
+            .attr("fill", d => {
+                let difference = d.avgSalaryHigh - d.avgSalaryLow;
+                if(difference < 0)
+                    return "rgb(103, 0, 13)";
+                else
+                    return colorGenerator(difference);
+            })
+            .attr("class", "salary-range-bar")
+            .on("mouseover", () => {
+                tooltip.transition()
+                    .duration(transitionLength)
+                    .style("opacity", 1)
+            })
+            .on("mousemove", d => {
+                let tooltipText = `Role: ${d.role}`;
+                tooltipText += `<br>Average salary for ages 55 and up: $${Math.round(d.avgSalaryHigh).toLocaleString()}`;
+                tooltipText += `<br>Average salary for ages 34 and below: $${Math.round(d.avgSalaryLow).toLocaleString()}`;
+                tooltipText += `<br>Change in salary over career: $${Math.round(d.avgSalaryHigh - d.avgSalaryLow).toLocaleString()}`;
+
+                tooltip.html(tooltipText)
+                    .style("left", (d3.mouse(body)[0] + 30) + "px")
+                    .style("top", (d3.mouse(body)[1] + 20) + "px");
+            })
+            .on("mouseleave", () => {
+                tooltip.transition()
+                    .duration(transitionLength)
+                    .style("opacity", 0)
+            })
+}
+
+function makeChordDiagram() {
+
+    let visualizationXCenter = 450;
+    let visualizationYCenter = 450;
+    let chordDiagramRadius = 210;
+    let chordDiagramArcWidth = 10;
+    let chordBarStart = chordDiagramRadius + 10;
+    let salaryScale = 0.0003;
+    let filteredRoleData = sortedRoleData.slice(topKStarting, topK);
+
+    let svgRoot = document.getElementById("chord-diagram");
+    while(svgRoot.lastChild)
+        svgRoot.removeChild(svgRoot.lastChild);
+
+    let chordDiagram = d3.select("#chord-diagram")
+        .append("g")
+        .attr("transform", "translate(" + visualizationXCenter + ", " + visualizationYCenter + ")");
+    
+    var colors = ["red", "green", "blue", "cyan", "magenta", "yellow"]
+    var colorsDimmed = ["#7C0000", "#004400", "#00007C", "#007C7C", "#7C007C", "#7C7C00"]
+
+    // Make a matrix to pass to d3.js to make the chord diagram
+    // matrix[i][j] is the value joining i to j
+    let arcMatrix = Array.from(Array(filteredRoleData.length), () => Array(filteredRoleData.length).fill(0));
+    for(let i = 0; i < filteredRoleData.length; i++) {
+        for(let j = 0; j < filteredRoleData.length; j++) {
+            if(i == j) {
+                arcMatrix[i][j] = 0;
+            } else {
+                for([key] of filteredRoleData[i].sharesRole) {
+                    if(key === filteredRoleData[j].role) {
+                        arcMatrix[i][j] = filteredRoleData[i].sharesRole.get(key);
+                        arcMatrix[j][i] = filteredRoleData[i].sharesRole.get(key);
+                    }
+                }
+            }
+        }
+    }
+
+    // Found by examining roleData in my browser's developer console
+    // Scale the values in each row so that their totals correspond to averageNRoles
+    // Lowest: 2.847876447876448, largest: 7.654377880184332
+    let normalizedArcMatrix = Array.from(Array(filteredRoleData.length), () => Array(filteredRoleData.length).fill(0));
+    for(let i = 0; i < normalizedArcMatrix.length; i++) {
+        let rowSum = 0;
+        for(let j = 0; j < normalizedArcMatrix[i].length; j++) {
+            rowSum += arcMatrix[i][j];
+        }
+
+        let scaleFactor = 1 / (rowSum / filteredRoleData[i].averageNRoles);
+        for(let j = 0; j < normalizedArcMatrix[i].length; j++) {
+            normalizedArcMatrix[i][j] = arcMatrix[i][j] * scaleFactor;
+        }
+    }
+    
+    let chordData = d3.chord()
+        .padAngle(0.05)
+        // .sortSubgroups(d3.descending)
+        (normalizedArcMatrix);
+    
+    // Salary bars key
+    chordDiagram.append('g')
+        .attr("id", "salary-key")
+    for(let i = 0; i < 400000; i += 50000)
+        chordDiagram.select("#salary-key")
+            .append('circle')
+            .attr("cx", 0)
+            .attr("cy", 0)
+            .attr("r", chordBarStart + i * salaryScale)
+            .attr("fill-opacity", 0)
+            .attr("stroke", "#ffffff")
+            .attr("stroke-opacity", 0.5)
+
+    // Add the links between groups
+    chordDiagram.datum(chordData)
+        .append("g")
+        .selectAll("path")
+        .data(function(d) { return d; })
+        .enter()
+        .append("path")
+            .attr("d", d3.ribbon()
+                .radius(200)
+            )
+            .attr("class", d => `chord chord-role-${d.source.index} chord-role-${d.target.index}`)
+            .style("fill", d => "hsl(" + Math.round(((filteredRoleData[d.source.index].averageNRoles - 2.8) / 7.7) * 120) + ", 100%, 30%)")
+            .style("opacity", 1)
+            .on("mouseover", (d, i) => {
+                // Make all other chords invisible
+                d3.selectAll(".chord")
+                    .transition()
+                    .duration(transitionLength)
+                    .style("opacity", 0.3);
+
+                // But make this one fully opaque
+                if(d.source.index === d.target.index)
+                    d3.select(`.chord-role-${d.source.index}`)
+                        .transition()
+                        .duration(transitionLength)
+                        .style("opacity", 1);
+                else
+                    d3.select(`.chord-role-${d.source.index}.chord-role-${d.target.index}`)
+                        .transition()
+                        .duration(transitionLength)
+                        .style("opacity", 1);
+                
+                // And highlight both labels
+                d3.selectAll(".arc-outer")
+                    .transition()
+                    .duration(transitionLength)
+                    .style("opacity", (d2, i2) => {
+                        if(d.source.index === i2 || d.target.index == i2)
+                            return 1;
+                        else
+                            return 0.3;
+                    });
+            }).on("mouseleave", d => {
+                d3.selectAll(".chord")
+                    .transition()
+                    .duration(transitionLength)
+                    .style("opacity", 1)
+
+                d3.selectAll(".arc-outer")
+                    .transition()
+                    .duration(transitionLength)
+                    .style("opacity", 1);
+            })
+    
+    let roleLabels = [];
+    for(let i = 0; i < filteredRoleData.length; i++)
+        roleLabels.push(filteredRoleData[i].role)
+    
+    // bars for average salary
+    // Average salary range:
+    // Largest average: 408445.73732718895, lowest average = 80044.8780952380980044.87809523809
+    // Average role range: 
+    // Largest: 7.654377880184332, lowest: 2.847876447876448
+
+    var tooltip = d3.select("#chord-diagram-tooltip");
+    let body = document.getElementsByTagName("body")[0];
+
+    let mouseOverFunction = (d, i) => {
+        d3.selectAll(".salary-range-bar")
+            .transition()
+            .duration(transitionLength)
+            .attr("opacity", (d2, i2) => {
+                if(i === i2)
+                    return 1;
+                else
+                    return 0.3;
+            })
+
+        tooltip.transition()
+            .duration(transitionLength)
+            .style("opacity", 1);
+        
+        // Dim all other chords
+        d3.selectAll(".chord")
+            .transition()
+            .duration(transitionLength)
+            .style("opacity", 0);
+        d3.selectAll(`.chord-role-${i}`)
+            .transition()
+            .duration(transitionLength)
+            .style("opacity", 1);
+
+        let tooltipText = `Role: ${filteredRoleData[i].role}`;
+        tooltipText += `<br>Average number of other roles taken: ${filteredRoleData[i].averageNRoles.toFixed(2)}`;
+        tooltipText += `<br>Average salary: $${Math.round(filteredRoleData[i].averageSalary).toLocaleString()}`;
+        tooltipText += `<br>`;
+        tooltipText += `<br>Age salary variation: $${Math.round(filteredRoleData[i].ageVariation).toLocaleString()}`;
+        tooltipText += `<br>Ethnicity salary variation: $${Math.round(filteredRoleData[i].ethnicityVariation).toLocaleString()}`;
+        tooltipText += `<br>Gender salary variation: $${Math.round(filteredRoleData[i].genderVariation).toLocaleString()}`;
+        tooltipText += `<br>Average salary variation: $${Math.round(filteredRoleData[i].salaryVariation).toLocaleString()}`;
+
+        tooltip.html(tooltipText)
+            .style("left", (d3.mouse(body)[0] + 30) + "px")
+            .style("top", (d3.mouse(body)[1] + 20) + "px");
+    };
+    let mouseMoveFunction = (d, i) => {
+        tooltip.style("left", (d3.mouse(body)[0] + 30) + "px")
+            .style("top", (d3.mouse(body)[1] + 20) + "px");
+    };
+    let mouseLeaveFunction = (d, i) => {
+        d3.selectAll(".salary-range-bar")
+            .transition()
+            .duration(transitionLength)
+            .attr("opacity", 1);
+        tooltip.transition()
+            .duration(transitionLength)
+            .style("opacity", 0);
+        
+        // Restore the opacity of all bars
+        d3.selectAll(".arc-outer")
+            .transition()
+            .duration(transitionLength)
+            .style("opacity", 1);
+        d3.selectAll(".chord")
+            .transition()
+            .duration(transitionLength)
+            .style("opacity", 1);
+    };
+    
+    // Chord ends (encoded with salary variation)
+    let salaryVariationColorGenerator = d3.scaleSequential()
+        .interpolator(d3.interpolatePiYG)
+        .domain([1000000, 0]);
+
+    chordDiagram.datum(chordData)
+        .selectAll("g.random-class-name")
+        .data(function(d) { return d.groups; })
+        .enter()
+        .append("g")
+            .attr("class", "arc-outer")
+        .append("path")
+            .style("fill", (d,i) => salaryVariationColorGenerator(filteredRoleData[i].salaryVariation))
+            .attr("d", d3.arc()
+                    .innerRadius(chordDiagramRadius - chordDiagramArcWidth)
+                    .outerRadius(chordDiagramRadius)
+                )
+            .on("mouseover", mouseOverFunction)
+            .on("mousemove", mouseMoveFunction)
+            .on("mouseleave", mouseLeaveFunction)
+    
+    chordDiagram.selectAll('.arc-outer')
+        .append("path")
+            .attr("fill", (d, i) => "hsl(" + Math.round(((filteredRoleData[i].averageNRoles - 2.5) / 7.5) * 120) + ", 100%, 30%)")
+            .attr("fill-opacity", 0.85)
+            .attr("d", d => {
+                    return d3.arc()
+                        .innerRadius(chordBarStart)
+                        .outerRadius(chordBarStart + filteredRoleData[d.index].averageSalary * salaryScale)
+                        (d)
+            })
+            .on("mouseover", mouseOverFunction)
+            .on("mousemove", mouseMoveFunction)
+            .on("mouseleave", mouseLeaveFunction)
+
+    // Role labels
+    chordDiagram.selectAll('.arc-outer')
+        .append("g")
+            .attr("transform", d => {
+                let middleAngle = ((d.endAngle - d.startAngle) / 2) + d.startAngle;
+                return "rotate(" + (middleAngle * 180 / Math.PI - 90) + ") translate(" + chordBarStart + ", 0)";
+            })
+        .append("text")
+            .attr("transform", d => {
+                let middleAngle = ((d.endAngle - d.startAngle) / 2) + d.startAngle;
+                if(middleAngle > Math.PI)
+                    return "rotate(180) translate(-16)"
+                else
+                    return null
+            })
+            .style("text-anchor", d => {
+                let middleAngle = ((d.endAngle - d.startAngle) / 2) + d.startAngle;
+                if(middleAngle > Math.PI)
+                    return "end"
+                else
+                    return null
+            })
+            .attr("x", 8)
+            .attr("y", 4)
+            .attr("fill", "#FFFFFF")
+            .text(d => roleLabels[d.index])
+            .on("mouseover", mouseOverFunction)
+            .on("mousemove", mouseMoveFunction)
+            .on("mouseleave", mouseLeaveFunction)
+    
+    // Make legends
+    let visualizationHeight = 900;
+    let visualizationWidth = 900;
+    let legendWidth = 200;
+    let legendHeight = 20;
+    let legendMarginBottom = 20;
+    let variationLegendX = visualizationWidth / 2 - 30 - legendWidth;
+
+    let variationScale = d3.scaleLinear()
+        .domain([0, 1000000])
+        .range([0, legendWidth]);
+
+    chordDiagram = d3.select("#chord-diagram");
+
+    // Salary variation legend
+    chordDiagram.append('linearGradient')
+        .attr('id', 'chord-variation-gradient')
+    d3.select('#chord-variation-gradient')
+        .append('stop')
+        .attr('offset', '0%')
+        .style('stop-color', salaryVariationColorGenerator(0))
+    d3.select('#chord-variation-gradient')
+        .append('stop')
+        .attr('offset', '50%')
+        .style('stop-color', salaryVariationColorGenerator(500000))
+    d3.select('#chord-variation-gradient')
+        .append('stop')
+        .attr('offset', '100%')
+        .style('stop-color', salaryVariationColorGenerator(1000000))
+    chordDiagram.append('rect')
+        .attr('x', variationLegendX)
+        .attr('y', visualizationHeight - legendMarginBottom - legendHeight)
+        .attr('width', legendWidth)
+        .attr('height', legendHeight)
+        .attr('fill', "url(#chord-variation-gradient)")
+
+    let variationLegendAxis = d3.axisBottom(variationScale)
+        .tickFormat(val => "$" + val.toLocaleString())
+        .ticks(3)
+
+    chordDiagram.append("g")
+        .attr("transform", "translate(" + (variationLegendX) + "," + (visualizationHeight - legendMarginBottom - legendHeight + legendHeight + 2) + ")")
+        .attr("id", "chord-variation-legend")
+        .call(variationLegendAxis)
+        .select("path")
+        .attr("stroke", "#ffffff")
+
+    chordDiagram.append("text")
+        .attr("x", variationLegendX)
+        .attr("y", visualizationHeight - legendMarginBottom - legendHeight - 10)
+        .attr("fill", "#ffffff")
+        .text("Salary Variation")
+
+    d3.selectAll("#chord-variation-legend line")
+        .attr("stroke", "#FFFFFF")
+    
+    // Average number of roles legend
+    let nrolesLegendX = visualizationWidth / 2 + 30;
+
+    let nrolesScale = d3.scaleLinear()
+        .domain([2.5, 7.5])
+        .range([0, legendWidth]);
+
+    chordDiagram.append('linearGradient')
+        .attr('id', 'chord-nroles-gradient')
+    d3.select('#chord-nroles-gradient')
+        .append('stop')
+        .attr('offset', '0%')
+        .style('stop-color', "#FF0000")
+    d3.select('#chord-nroles-gradient')
+        .append('stop')
+        .attr('offset', '50%')
+        .style('stop-color', "#FFFF00")
+    d3.select('#chord-nroles-gradient')
+        .append('stop')
+        .attr('offset', '100%')
+        .style('stop-color', "#00FF00")
+    chordDiagram.append('rect')
+        .attr('x', nrolesLegendX)
+        .attr('y', visualizationHeight - legendMarginBottom - legendHeight)
+        .attr('width', legendWidth)
+        .attr('height', legendHeight)
+        .attr('fill', "url(#chord-nroles-gradient)")
+
+    let nrolesLegendAxis = d3.axisBottom(nrolesScale)
+        .ticks(5)
+
+    chordDiagram.append("g")
+        .attr("transform", "translate(" + (nrolesLegendX) + "," + (visualizationHeight - legendMarginBottom - legendHeight + legendHeight + 2) + ")")
+        .attr("id", "chord-nroles-legend")
+        .call(nrolesLegendAxis)
+        .select("path")
+        .attr("stroke", "#ffffff")
+
+    chordDiagram.append("text")
+        .attr("x", nrolesLegendX)
+        .attr("y", visualizationHeight - legendMarginBottom - legendHeight - 10)
+        .attr("fill", "#ffffff")
+        .text("Average number of roles")
+
+    d3.selectAll("#chord-nroles-legend line")
+        .attr("stroke", "#FFFFFF")
+
+    d3.selectAll(".tick>text")
+        .attr("fill", "#ffffff")
+    
+    document.getElementById("status").innerHTML = "";
+}
+
+function makeChoroplethMap() {
+    let svg = d3.select('#choropleth-map');
+    let width = document.getElementById("choropleth-map").clientWidth;
+    let height = document.getElementById("choropleth-map").clientHeight;
+
+    // Map and projection
+    var path = d3.geoPath();
+    var projection = d3.geoNaturalEarth1()
+        .scale(120)
+        .center([10,0])
+        .translate([width / 2, height / 2]);
+
+    // Data and color scale
+    var data = d3.map();
+    var colorScale = d3.scaleSequential()
+        .interpolator(d3.interpolateYlOrBr)
+        .domain([0, 80000])
+
+    // Load external data and boot
+    d3.queue()
+        .defer(d3.json, "./modified-world-data.geojson")
+        .await(ready);
+
+    function ready(error, topo) {
+
+        var tooltip = d3.select("#map-tooltip");
+        let body = document.getElementsByTagName("body")[0];
+
+        let mouseOver = function(d) {
+            d3.selectAll(".Country")
+                .transition()
+                .duration(transitionLength)
+                .style("opacity", 0.5)
+            d3.select(this)
+                .transition()
+                .duration(transitionLength)
+                .style("opacity", 1)
+
+            tooltip.style("opacity", 1)
+            d3.select(this)
+                .style("stroke", "black")
+                .style("opacity", 1)
+        }
+
+        let mouseMove = function(d) {
+            let tooltipText = `Country name: ${d.properties.name}`;
+            tooltipText += `<br>No salary data`;
+
+            if(countrySalaryVariation.has(d.properties.name)) {
+                let countryData = countrySalaryVariation.get(d.properties.name);
+
+                function showIfNotNan(salary) {
+                    if(isNaN(salary))
+                        return "No data";
+                    else
+                        return "$" + Math.round(salary).toLocaleString();
+                }
+
+                tooltipText = `Country name: ${d.properties.name}`;
+                tooltipText += `<br>`;
+                tooltipText += `<br>Age salary variation: ${showIfNotNan(countryData.ageVariationAverage)}`;
+                tooltipText += `<br>Ethnicity salary variation: ${showIfNotNan(countryData.ethnicityVariationAverage)}`;
+                tooltipText += `<br>Gender salary variation: ${showIfNotNan(countryData.genderVariationAverage)}`;
+                tooltipText += `<br>Average salary variation: ${showIfNotNan(countryData.salaryVariation)}`;
+            }
+
+            tooltip.html(tooltipText)
+                .style("left", (d3.mouse(body)[0] + 30) + "px")
+                .style("top", (d3.mouse(body)[1] + 20) + "px");
+        }
+
+        let mouseLeave = function(d) {
+            d3.selectAll(".Country")
+                .transition()
+                .duration(transitionLength)
+                .style("opacity", .8)
+            d3.select(this)
+                .transition()
+                .duration(transitionLength)
+
+            tooltip.style("opacity", 0)
+            d3.select(this)
+                .style("stroke", "none")
+                .style("opacity", 0.8)
+        }
+
+        // Draw the map
+        svg.append("g")
+            .selectAll("path")
+            .data(topo.features)
+            .enter()
+            .append("path")
+                // draw each country
+                .attr("d", d3.geoPath()
+                    .projection(projection)
+                )
+                // Set the color of each country
+                .attr("fill", function (d) {
+                    if(countrySalaryVariation.has(d.properties.name)) {
+                        let salaryVariation = countrySalaryVariation.get(d.properties.name).salaryVariation;
+
+                        if(salaryVariation === -1)
+                            return "#888888"
+                        else
+                            return colorScale(salaryVariation);
+                    } else {
+                        return "#888888"
+                    }
+
+                })
+                .attr("class", "Country")
+                .style("opacity", 0.8)
+                .on("mouseover", mouseOver)
+                .on("mousemove", mouseMove)
+                .on("mouseleave", mouseLeave);
+        
+        // Color scale
+        let legendX = 340;
+        let legendY = 240;
+        let legendWidth = 20;
+        let legendHeight = 80;
+
+        svg.append('linearGradient')
+            .attr('id', 'choropleth-gradient')
+            .attr('gradientTransform', 'rotate(90)')
+        d3.select('#choropleth-gradient')
+            .append('stop')
+            .attr('offset', '0%')
+            .style('stop-color', "#662506")
+        d3.select('#choropleth-gradient')
+            .append('stop')
+            .attr('offset', '100%')
+            .style('stop-color', '#FFFFF3')
+        svg.append('rect')
+            .attr('x', legendX)
+            .attr('y', legendY)
+            .attr('width', legendWidth)
+            .attr('height', legendHeight)
+            .attr('fill', "url(#choropleth-gradient)")
+            .style('stroke', '#000000')
+            .style('stroke-weight', '2')
+
+        // Scale ticks
+        let colorY = d3.scaleLinear()
+            .domain([0, 80000])
+            .range([legendHeight, 0]);
+
+        let choroplethAxis = d3.axisRight(colorY)
+            .tickFormat(val => "$" + val.toLocaleString())
+            .ticks(3)
+
+        svg.append("g")
+            .attr("transform", "translate(" + (legendX + legendWidth) + "," + legendY + ")")
+            .attr("id", "choropleth-legend")
+            .call(choroplethAxis)
+            .select("path")
+            .attr("stroke", "#ffffff")
+        
+        d3.selectAll("#choropleth-legend line")
+            .attr("stroke", "#ffffff")
+
+        svg.append("text")
+            .attr("x", legendX)
+            .attr("y", legendY - 15)
+            .attr("fill", "#ffffff")
+            .text("Variation")
+        
+        d3.selectAll(".tick>text")
+            .attr("fill", "#ffffff")
+    }
+}
+
+function makeHeatmap() {
+
+    let width = 340;
+    let yAxisMargin = 60
+    let height = 340;
+
+    // append the svg object to the body of the page
+    var svg = d3.select("#heatmap")
+        .append("g")
+        .attr("transform", `translate(${yAxisMargin},0)`);
+
+    // Labels of row and columns -> unique identifier of the column called 'group' and 'variable'
+    let axisKeys = [];
+    for(let i = 0; i < 11; i++)
+        axisKeys.push(i);
+
+    // Build X scales and axis:
+    var x = d3.scaleBand()
+        .range([ 0, width ])
+        .domain(axisKeys)
+        .padding(0.05);
+    svg.append("g")
+        .attr("id", "x-ticks")
+        .style("font-size", 15)
+        .attr("transform", "translate(0," + height + ")")
+        .call(d3.axisBottom(x).tickSize(0).tickFormat(val => {
+            if(val <= 50)
+                return `${val * 5}-${(val + 1) * 5 - 1}`;
+            else
+                return ">50"
+        }))
+        .select(".domain").remove();
+    
+    svg.append("text")
+        .attr("text-anchor", "middle")
+        .attr("fill", "#ffffff")
+        .attr("x", width / 2)
+        .attr("y", height + 30)
+        .text("Years spent coding professionally")
+
+    // Build Y scales and axis:
+    var y = d3.scaleBand()
+        .range([ height, 0 ])
+        .domain(axisKeys)
+        .padding(0.05);
+    svg.append("g")
+        .style("font-size", 15)
+        .attr("id", "y-ticks")
+        .call(d3.axisLeft(y).tickSize(0).tickFormat(val => {
+            if(val <= 50)
+                return `${val * 5}-${(val + 1) * 5 - 1}`;
+            else
+                return ">50"
+        }))
+        .select(".domain").remove();
+
+    
+    svg.append("text")
+        .attr("text-anchor", "middle")
+        .attr("transform", "rotate(-90)")
+        .attr("fill", "#ffffff")
+        .attr("x", -height / 2)
+        .attr("y", -40)
+        .text("Total years spent coding")
+
+    // Build color scale
+    var myColor = d3.scaleSequential()
+        .interpolator(d3.interpolateYlOrBr)
+        .domain([0,300000]);
+
+    // HTML gradient element
+    svg.append('linearGradient')
+        .attr('id', 'heatmap-gradient')
+        .attr('gradientTransform', 'rotate(90)')
+    d3.select('#heatmap-gradient')
+        .append('stop')
+        .attr('offset', '0%')
+        .style('stop-color', "#662506")
+    d3.select('#heatmap-gradient')
+        .append('stop')
+        .attr('offset', '100%')
+        .style('stop-color', '#FFFFF3')
+    svg.append('rect')
+        .attr('x', width + 10)
+        .attr('y', height / 4)
+        .attr('width', 20)
+        .attr('height', height / 2)
+        .attr('fill', "url(#heatmap-gradient)")
+        .style('stroke', '#000000')
+        .style('stroke-weight', '2')
+
+    // Scale ticks
+    let colorY = d3.scaleLinear()
+        .domain([0, 300000])
+        .range([height / 2, 0]);
+
+    let heatmapAxis = d3.axisRight(colorY)
+        .tickFormat(val => "$" + val.toLocaleString())
+        .ticks(5)
+
+    svg.append("g")
+        .attr("transform", "translate(" + (width + 30) + "," + (height / 4) + ")")
+        .attr("id", "heatmap-legend")
+        .call(heatmapAxis)
+        .select("path")
+        .attr("stroke", "#ffffff")
+    
+    d3.selectAll("#heatmap-legend line")
+        .attr("stroke", "#ffffff")
+
+    svg.append("text")
+        .attr("x", width + 40)
+        .attr("y", height / 4 - 20)
+        .attr("fill", "#ffffff")
+        .text("Salary")
+    
+    d3.selectAll(".tick>text")
+        .attr("fill", "#ffffff")
+
+    // Functions that change the tooltip when user hovers, moves, or leaves a cell
+    var tooltip = d3.select("#heatmap-tooltip");
+    let body = document.getElementsByTagName("body")[0];
+
+    var mouseover = function(d) {
+        tooltip.style("opacity", 1)
+        d3.select(this)
+            .style("stroke", "black")
+            .style("opacity", 1)
+    }
+    var mousemove = function(d) {
+        let tooltipText = `Years of professional coding: ${d.column * 5}-${(d.column + 1) * 5 - 1}`;
+        tooltipText += `<br>Years spent coding: ${d.row * 5}-${(d.row + 1) * 5 - 1}`;
+        tooltipText += `<br>Salary: $${d.salary.toLocaleString()}`;
+
+        tooltip.html(tooltipText)
+            .style("left", (d3.mouse(body)[0] + 30) + "px")
+            .style("top", (d3.mouse(body)[1] + 20) + "px");
+    }
+    var mouseleave = function(d) {
+        tooltip.style("opacity", 0)
+        d3.select(this)
+            .style("stroke", "none")
+            .style("opacity", 0.8)
+    }
+
+    // add the squares
+    svg.selectAll()
+        // .data(data, function(d) {return d.group+':'+d.variable;})
+        .data(heatmapData)
+        .enter()
+        .append("rect")
+            .attr("x", function(d) { return x(d.column) })
+            .attr("y", function(d) { return y(d.row) })
+            .attr("rx", 4)
+            .attr("ry", 4)
+            .attr("width", x.bandwidth() )
+            .attr("height", y.bandwidth() )
+            .style("fill", function(d) { return myColor(d.salary)} )
+            .style("stroke-width", 4)
+            .style("stroke", "none")
+            .style("opacity", 0.8)
+            .on("mouseover", mouseover)
+            .on("mousemove", mousemove)
+            .on("mouseleave", mouseleave)
+}
+
+</script>
+</body>
+</html>
